@@ -17,7 +17,6 @@ package extract
 import (
 	"bytes"
 	"crypto"
-	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -60,14 +59,16 @@ func GrubStateFromTPMLog(hash crypto.Hash, events []tcg.Event) (*pb.GrubState, e
 			if suffixAt == -1 {
 				return nil, fmt.Errorf("invalid prefix seen for PCR%d event: %s", index, rawData)
 			}
-			hasher.Write(rawData[suffixAt : len(rawData)-1])
-			if !bytes.Equal(event.ReplayedDigest(), hasher.Sum(nil)) {
-				// Older GRUBs measure "grub_cmd " with the null terminator.
-				// However, "grub_kernel_cmdline " measurements also ignore the null terminator.
-				hasher.Reset()
-				hasher.Write(rawData[suffixAt:])
-				if !bytes.Equal(event.ReplayedDigest(), hasher.Sum(nil)) {
-					return nil, fmt.Errorf("invalid digest seen for GRUB event %d: %s", eventNum, hex.EncodeToString(event.ReplayedDigest()))
+
+			// Check the slice is not empty after the suffix, which ensures rawData[len(rawData)-1] is not part
+			// of the suffix.
+			if len(rawData[suffixAt:]) > 0 && rawData[len(rawData)-1] == '\x00' {
+				if err := verifyNullTerminatedDataDigest(hasher, rawData[suffixAt:], event.ReplayedDigest()); err != nil {
+					return nil, fmt.Errorf("invalid GRUB event (null-terminated) #%d: %v", eventNum, err)
+				}
+			} else {
+				if err := verifyDataDigest(hasher, rawData[suffixAt:], event.ReplayedDigest()); err != nil {
+					return nil, fmt.Errorf("invalid GRUB event #%d: %v", eventNum, err)
 				}
 			}
 			hasher.Reset()

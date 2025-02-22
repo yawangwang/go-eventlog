@@ -97,7 +97,7 @@ func TestExtractFirmwareLogStateRTMR(t *testing.T) {
 			name: "Rand Index",
 			mutate: func(evts []tcg.Event) {
 				for i := range evts {
-					bigInt, err := rand.Int(rand.Reader, big.NewInt(25))
+					bigInt, err := rand.Int(rand.Reader, big.NewInt(4))
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -311,6 +311,46 @@ func TestExtractFirmwareLogStateTPMNilEvents(t *testing.T) {
 	_, err := FirmwareLogState(nil, crypto.SHA384, TPMRegisterConfig, Opts{Loader: GRUB})
 	if err == nil || !strings.Contains(err.Error(), "no GRUB measurements found") {
 		t.Errorf("ExtractFirmwareLogState(nil): got %v, expected error no GRUB measurements found", err)
+	}
+}
+
+func TestGrubStateFromTPMLogWithModifiedNullTerminator(t *testing.T) {
+	hash, tpmEvents := getTPMELEvents(t)
+
+	// Make sure the original events can parse successfully.
+	if _, err := GrubStateFromTPMLog(hash, tpmEvents); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change the null terminator
+	for _, e := range tpmEvents {
+		if e.Index == 8 {
+			if e.Data[len(e.Data)-1] == '\x00' {
+				e.Data[len(e.Data)-1] = '\xff'
+			}
+		}
+	}
+
+	if _, err := GrubStateFromTPMLog(hash, tpmEvents); err == nil {
+		t.Error("GrubStateFromTPMLog should fail after modifying the null terminator")
+	}
+}
+
+func TestGrubStateFromRTMRLogWithModifiedNullTerminator(t *testing.T) {
+	ccelEvents := getCCELEvents(t)
+
+	// Make sure the original events can parse successfully.
+	if _, err := GrubStateFromRTMRLog(crypto.SHA384, ccelEvents); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, e := range ccelEvents {
+		if e.Data[len(e.Data)-1] == '\x00' {
+			e.Data[len(e.Data)-1] = '\xff'
+		}
+	}
+	if _, err := GrubStateFromRTMRLog(crypto.SHA384, ccelEvents); err == nil {
+		t.Error("GrubStateFromRTMRLog should fail after modifying the null terminator")
 	}
 }
 

@@ -19,8 +19,10 @@ import (
 	"crypto"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 
 	"github.com/google/go-eventlog/tcg"
 )
@@ -54,4 +56,31 @@ func DigestEquals(e tcg.Event, b []byte) error {
 	}
 
 	return fmt.Errorf("digest (len %d) does not match", len(digest))
+}
+
+// verifyNullTerminatedRawData checks the digest of the data.
+// Returns nil if digest match the hash of the data or the data without the last bytes (\x00).
+// The caller needs to make sure len(data) is at least 1, and data is ended with '\x00',
+// otherwise this function will return an error.
+func verifyNullTerminatedDataDigest(hasher hash.Hash, data []byte, digest []byte) error {
+	if len(data) == 0 || data[len(data)-1] != '\x00' {
+		return errors.New("given data is not null-terminated")
+	}
+	if err := verifyDataDigest(hasher, data, digest); err != nil {
+		if err := verifyDataDigest(hasher, data[:len(data)-1], digest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// verifyDataDigest checks the digest of the data.
+func verifyDataDigest(hasher hash.Hash, data []byte, digest []byte) error {
+	hasher.Reset()
+	hasher.Write(data)
+	defer hasher.Reset()
+	if !bytes.Equal(digest, hasher.Sum(nil)) {
+		return fmt.Errorf("invalid digest: %s", hex.EncodeToString(digest))
+	}
+	return nil
 }
