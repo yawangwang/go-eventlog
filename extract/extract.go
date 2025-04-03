@@ -198,6 +198,12 @@ func matchWellKnown(cert x509.Certificate) (pb.WellKnownCertificate, error) {
 	if bytes.Equal(wellknown.MicrosoftUEFICA2011Cert, cert.Raw) {
 		return pb.WellKnownCertificate_MS_THIRD_PARTY_UEFI_CA_2011, nil
 	}
+	if bytes.Equal(wellknown.MicrosoftKEKCA2011Cert, cert.Raw) {
+		return pb.WellKnownCertificate_MS_THIRD_PARTY_KEK_CA_2011, nil
+	}
+	if bytes.Equal(wellknown.GceDefaultPKCert, cert.Raw) {
+		return pb.WellKnownCertificate_GCE_DEFAULT_PK, nil
+	}
 	return pb.WellKnownCertificate_UNKNOWN, errors.New("failed to find matching well known certificate")
 }
 
@@ -216,6 +222,8 @@ func SecureBootState(replayEvents []tcg.Event, registerCfg registerConfig) (*pb.
 		Db:        convertToPbDatabase(attestSbState.PermittedKeys, attestSbState.PermittedHashes),
 		Dbx:       convertToPbDatabase(attestSbState.ForbiddenKeys, attestSbState.ForbiddenHashes),
 		Authority: convertToPbDatabase(attestSbState.PostSeparatorAuthority, nil),
+		Pk:        convertToPbDatabase(attestSbState.PlatformKeys, attestSbState.PlatformKeyHashes),
+		Kek:       convertToPbDatabase(attestSbState.ExchangeKeys, attestSbState.ExchangeKeyHashes),
 	}, nil
 }
 
