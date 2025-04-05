@@ -227,6 +227,64 @@ func SecureBootState(replayEvents []tcg.Event, registerCfg registerConfig) (*pb.
 	}, nil
 }
 
+// EfiDriverState extracts EFI Driver information from a UEFI TCG2 firmware event log.
+// Obtained from section 3.3.4.3 PCR[2]-UEFI Drivers and UEFI Applications
+// https://trustedcomputinggroup.org/wp-content/uploads/TCG-PC-Client-Platform-Firmware-Profile-Version-1.06-Revision-52_pub-3.pdf
+func EfiDriverState(events []tcg.Event, registerCfg registerConfig) (*pb.EfiState, error) {
+	var (
+		seenSeparator          bool
+		efiDriverStates        []*pb.EfiApp
+		efiRuntimeDriverStates []*pb.EfiApp
+	)
+	for _, e := range events {
+		if e.MRIndex() != registerCfg.FirmwareDriverIdx {
+			continue
+		}
+
+		et, err := tcg.UntrustedParseEventType(uint32(e.UntrustedType()))
+		if err != nil {
+			return nil, fmt.Errorf("unrecognised event type: %v", err)
+		}
+		digestVerify := DigestEquals(e, e.RawData())
+		switch et {
+		case tcg.Separator:
+			if seenSeparator {
+				return nil, fmt.Errorf("duplicate separator at event %d", e.Num())
+			}
+			seenSeparator = true
+			if !bytes.Equal(e.RawData(), []byte{0, 0, 0, 0}) {
+				return nil, fmt.Errorf("invalid separator data at event %d: %v", e.Num(), e.RawData())
+			}
+			if digestVerify != nil {
+				return nil, fmt.Errorf("invalid separator digest at event %d: %v", e.Num(), digestVerify)
+			}
+
+		case tcg.EFIBootServicesDriver:
+			if !seenSeparator {
+				// The EFI Boot Services Driver will use the EFI LoadImage service, so try loading it.
+				_, err := tcg.ParseEFIImageLoad(bytes.NewReader(e.RawData()))
+				if err != nil {
+					return nil, fmt.Errorf("failed parsing EFI image load at boot services driver event %d: %v", e.Num(), err)
+				}
+				efiDriverStates = append(efiDriverStates, &pb.EfiApp{Digest: e.ReplayedDigest()})
+			}
+		case tcg.EFIRuntimeServicesDriver:
+			if !seenSeparator {
+				// The EFI Runtime Services Driver will use the EFI LoadImage service, so try loading it.
+				_, err := tcg.ParseEFIImageLoad(bytes.NewReader(e.RawData()))
+				if err != nil {
+					return nil, fmt.Errorf("failed parsing EFI image load at boot services driver event %d: %v", e.Num(), err)
+				}
+				efiRuntimeDriverStates = append(efiRuntimeDriverStates, &pb.EfiApp{Digest: e.ReplayedDigest()})
+			}
+		}
+	}
+	return &pb.EfiState{
+		BootServicesDrivers:    efiDriverStates,
+		RuntimeServicesDrivers: efiRuntimeDriverStates,
+	}, nil
+}
+
 // PlatformState extracts platform information from a UEFI TCG2 firmware
 // event log.
 func PlatformState(hash crypto.Hash, events []tcg.Event) (*pb.PlatformState, error) {
@@ -381,7 +439,15 @@ func EfiState(hash crypto.Hash, events []tcg.Event, registerCfg registerConfig) 
 	// Otherwise, software further down the bootchain could extend bad
 	// PCR4/RTMR2 measurements.
 	if seenExitBootServices {
-		return &pb.EfiState{Apps: efiAppStates}, nil
+		efiDriver, err := EfiDriverState(events, registerCfg)
+		if err != nil {
+			return nil, err
+		}
+		return &pb.EfiState{
+			Apps:                   efiAppStates,
+			BootServicesDrivers:    efiDriver.BootServicesDrivers,
+			RuntimeServicesDrivers: efiDriver.RuntimeServicesDrivers,
+		}, nil
 	}
 	return nil, nil
 }

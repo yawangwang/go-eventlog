@@ -15,6 +15,7 @@
 package extract
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rand"
 	"encoding/hex"
@@ -24,10 +25,12 @@ import (
 	"testing"
 
 	"github.com/google/go-eventlog/internal/testutil"
-	pb "github.com/google/go-eventlog/proto/state"
 	"github.com/google/go-eventlog/register"
 	"github.com/google/go-eventlog/tcg"
 	"github.com/google/go-eventlog/testdata"
+	"google.golang.org/protobuf/proto"
+
+	pb "github.com/google/go-eventlog/proto/state"
 )
 
 func TestExtractFirmwareLogStateRTMR(t *testing.T) {
@@ -370,6 +373,129 @@ func TestGrubStateFromRTMRLogWithModifiedNullTerminator(t *testing.T) {
 	}
 	if _, err := GrubStateFromRTMRLog(crypto.SHA384, ccelEvents); err == nil {
 		t.Error("GrubStateFromRTMRLog should fail after modifying the null terminator")
+	}
+}
+
+func TestEfiState(t *testing.T) {
+	tests := []struct {
+		name            string
+		events          func() (crypto.Hash, []tcg.Event)
+		registserConfig registerConfig
+		wantPass        bool
+		wantEfiState    *pb.EfiState
+	}{
+		{
+			name: "success with TPM logs",
+			events: func() (crypto.Hash, []tcg.Event) {
+				return getTPMELEvents(t)
+			},
+			registserConfig: TPMRegisterConfig,
+			wantPass:        true,
+			wantEfiState: &pb.EfiState{
+				Apps: []*pb.EfiApp{
+					{
+						Digest: []byte("rM\xe6\x84M\xd0\xfea\x8b\xa5wl{\xca\x07(\xbe8\xa6TN$\xe4N\xf2Y\xb9\x87\xb7\xab΀"),
+					},
+					{
+						Digest: []byte("^\x8c\xb7Z\xcd\xf8\xe0\x9e_\xc1L\xc2\xd6\xce\x0c\"\x88\xaf \x89v\xd9s\t\x85\x1cf\x1e\x91\xec\x1e\x03"),
+					},
+				},
+			},
+		},
+		{
+			name: "success with CCEL logs",
+			events: func() (crypto.Hash, []tcg.Event) {
+				return crypto.SHA384, getCCELEvents(t)
+			},
+			registserConfig: RTMRRegisterConfig,
+			wantPass:        true,
+			wantEfiState: &pb.EfiState{
+				Apps: []*pb.EfiApp{
+					{
+						Digest: []byte("Z\x10\x02l\x9a\xd4\x1d\x1f\x90ܜ\xfe\x88\xbc\xab\xe1\x84,\xcf\xd8T\x95\xc8\x1b\x1a\x1a\xb9&\xa9\xef#\xb5\xd2\xe6\x0e\xef\xeb\xa0A[\xbe\\\x8c2\x8a\x89\x9a\n"),
+					},
+					{
+						Digest: []byte("\xb1\xfb\x7fL\x06\x89\xf5\xa9 \xb8\x00\xb2`pu\xf4\x90o\x8c\x82\x82\xd4NV\xfc\x99\x1e\xc0\x1f\x1a\xda\xc1v\xd2\x04\n&\xf1E=\xf1\x12\xd7\xc4\xf4)?\xc9"),
+					},
+				},
+			},
+		},
+		{
+			name: "nil EFI state with missing ExitBootServicesInvocation event in TPM logs",
+			events: func() (crypto.Hash, []tcg.Event) {
+				hash, evts := getTPMELEvents(t)
+				var failedEvts []tcg.Event
+				for _, e := range evts {
+					if bytes.Equal(e.RawData(), []byte(tcg.ExitBootServicesInvocation)) {
+						continue
+					}
+					failedEvts = append(failedEvts, e)
+				}
+				return hash, failedEvts
+			},
+			registserConfig: TPMRegisterConfig,
+			wantPass:        true,
+			wantEfiState:    nil,
+		},
+		{
+			name: "failed with missing CallingEFIApp event in TPM logs",
+			events: func() (crypto.Hash, []tcg.Event) {
+				hash, evts := getTPMELEvents(t)
+				var failedEvts []tcg.Event
+				for _, e := range evts {
+					if bytes.Equal(e.RawData(), []byte(tcg.CallingEFIApplication)) {
+						continue
+					}
+					failedEvts = append(failedEvts, e)
+				}
+				return hash, failedEvts
+			},
+			registserConfig: TPMRegisterConfig,
+			wantPass:        false,
+			wantEfiState:    nil,
+		},
+		{
+			name: "failed with multiple separators in TPM logs",
+			events: func() (crypto.Hash, []tcg.Event) {
+				hash, evts := getTPMELEvents(t)
+				for i := range evts {
+					evts[i].Type = tcg.Separator
+				}
+				return hash, evts
+			},
+			registserConfig: TPMRegisterConfig,
+			wantPass:        false,
+			wantEfiState:    nil,
+		},
+		{
+			name: "failed with bad data in TPM logs",
+			events: func() (crypto.Hash, []tcg.Event) {
+				hash, evts := getTPMELEvents(t)
+				for i := range evts {
+					b := make([]byte, len(evts[i].Data))
+					if _, err := rand.Read(b); err != nil {
+						t.Fatal(err)
+					}
+					evts[i].Data = b
+				}
+				return hash, evts
+			},
+			registserConfig: TPMRegisterConfig,
+			wantPass:        false,
+			wantEfiState:    nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hash, events := tc.events()
+			efiState, err := EfiState(hash, events, tc.registserConfig)
+			if gotPass := (err == nil); gotPass != tc.wantPass {
+				t.Errorf("EfiState returned unexpected result, gotPass %v, but want %v", gotPass, tc.wantPass)
+			}
+			if !proto.Equal(efiState, tc.wantEfiState) {
+				t.Errorf("EfiState returned unexpected state, got %+v, but want %+v", efiState, tc.wantEfiState)
+			}
+		})
 	}
 }
 
