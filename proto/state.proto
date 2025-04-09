@@ -161,10 +161,11 @@ message SecureBootState {
 
 message EfiApp {
   // The PE/COFF digest of the EFI application (pulled from the raw event digest).
+  // This can also represent digest of the EFI boot/runtime service drivers.
   bytes digest = 1;
 }
 
-// The verified state of EFI Applications. Policy usage on this machine state
+// The verified state of EFI Drivers and Applications. Policy usage on this machine state
 // should check the entire set of EFI App digests matches, not a subset.
 message EfiState {
   // UEFI's OS Loader code is required to measure attempts to load and execute
@@ -172,6 +173,12 @@ message EfiState {
   // UEFI applications are typically bootloaders such as shim and GRUB.
   // These run and are measured using the UEFI LoadImage() service.
   repeated EfiApp apps = 1;
+  // The EFI drivers,
+  // obtained from https://trustedcomputinggroup.org/wp-content/uploads/TCG_EFI_Platform_1_22_Final_-v15.pdf#page=22.
+  // The EFI Boot Services Drivers from adapter or loaded bydriver in adapter.
+  repeated EfiApp boot_services_drivers = 2;
+  // The EFI Runtime Drivers from adapter or loaded bydriver in adapter.
+  repeated EfiApp runtime_services_drivers = 3;
 }
 
 // Enum values come from the TCG Algorithm Registry - v1.27 - Table 3.
