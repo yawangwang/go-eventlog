@@ -297,6 +297,7 @@ func EfiState(hash crypto.Hash, events []tcg.Event, registerCfg registerConfig) 
 	exitBootSvcDigest := hasher.Sum(nil)
 
 	var efiAppStates []*pb.EfiApp
+	var efiAppEvents []tcg.Event
 	var seenSeparator4 bool
 	var seenSeparator5 bool
 	var seenCallingEfiApp bool
@@ -331,11 +332,25 @@ func EfiState(hash crypto.Hash, events []tcg.Event, registerCfg registerConfig) 
 				seenCallingEfiApp = true
 			}
 
+			if bytes.HasPrefix(event.RawData(), []byte(tcg.SpecificBootOptionPrefix)) {
+				if evtType != tcg.EFIAction {
+					return nil, fmt.Errorf("%s%d contains specific boot option event but non EFIAction type: %d",
+						registerCfg.Name, index, evtType)
+				}
+				if !event.DigestVerified() {
+					return nil, fmt.Errorf("unverified boot option digest for %s%d", registerCfg.Name, index)
+				}
+				if !seenCallingEfiApp {
+					return nil, fmt.Errorf("found boot option event in %s%d before CallingEFIApp event", registerCfg.Name, index)
+				}
+			}
+
 			if evtType == tcg.EFIBootServicesApplication {
 				if !seenCallingEfiApp {
 					return nil, fmt.Errorf("found EFIBootServicesApplication in %s%d before CallingEFIApp event", registerCfg.Name, index)
 				}
 				efiAppStates = append(efiAppStates, &pb.EfiApp{Digest: event.ReplayedDigest()})
+				efiAppEvents = append(efiAppEvents, event)
 			}
 
 			isSeparator, err := checkIfValidSeparator(event, separatorInfo)
@@ -381,7 +396,10 @@ func EfiState(hash crypto.Hash, events []tcg.Event, registerCfg registerConfig) 
 	// Otherwise, software further down the bootchain could extend bad
 	// PCR4/RTMR2 measurements.
 	if seenExitBootServices {
-		return &pb.EfiState{Apps: efiAppStates}, nil
+		return &pb.EfiState{
+			Apps:      efiAppStates,
+			AppEvents: tcg.ConvertToPbEvents(hash, efiAppEvents),
+		}, nil
 	}
 	return nil, nil
 }

@@ -220,10 +220,14 @@ func UntrustedParseEventType(et uint32) (EventType, error) {
 
 // Constant events used with type "EV_EFI_ACTION".
 // Taken from TCG PC Client Platform Firmware Profile Specification,
-// Table 17 EV_EFI_ACTION Strings.
+// https://trustedcomputinggroup.org/wp-content/uploads/TCG-PC-Client-Platform-Firmware-Profile-Version-1.06-Revision-52_pub-3.pdf
+// Table 30 EV_EFI_ACTION Strings.
 const (
 	// Measured when Boot Manager attempts to execute code from a Boot Option.
-	CallingEFIApplication      string = "Calling EFI Application from Boot Option"
+	CallingEFIApplication string = "Calling EFI Application from Boot Option"
+	// The specific Boot Option the Boot Manager passes control to.
+	// The full format is “Booting to <Boot####> Option”.
+	SpecificBootOptionPrefix   string = "Booting to"
 	ExitBootServicesInvocation string = "Exit Boot Services Invocation"
 )
 

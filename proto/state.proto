@@ -172,6 +172,7 @@ message EfiState {
   // UEFI applications are typically bootloaders such as shim and GRUB.
   // These run and are measured using the UEFI LoadImage() service.
   repeated EfiApp apps = 1;
+  repeated Event app_events = 2;
 }
 
 // Enum values come from the TCG Algorithm Registry - v1.27 - Table 3.
